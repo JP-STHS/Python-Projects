@@ -8,7 +8,7 @@ from ultralytics import YOLO
 import cv2
 import math 
 # start webcam
-cap = cv2.VideoCapture("http://localhost:8080/video_feed")
+cap = cv2.VideoCapture("http://host.docker.internal:8080/video_feed")
 cap.set(3, 640)
 cap.set(4, 480)
 
