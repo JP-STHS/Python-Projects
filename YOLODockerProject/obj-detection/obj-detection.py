@@ -6,31 +6,24 @@
 
 from ultralytics import YOLO
 import cv2
-import math 
+import math
+import pytesseract
 # start webcam
 cap = cv2.VideoCapture("http://host.docker.internal:8080/video_feed")
 cap.set(3, 640)
 cap.set(4, 480)
 
 # model
-model = YOLO("yolo-Weights/yolov8n.pt")
+model = YOLO("models/best.pt")
 
 # object classes
-classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat",
-              "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
-              "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
-              "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat",
-              "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
-              "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli",
-              "carrot", "hot dog", "pizza", "donut", "cake", "chair", "sofa", "pottedplant", "bed",
-              "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote", "keyboard", "cell phone",
-              "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
-              "teddy bear", "hair drier", "toothbrush"
-              ]
-
+classNames = ["person", "bicycle", "car", "motorbike", "bus", "truck", "boat", "license plate"]
 
 while True:
     success, img = cap.read()
+    if not success:
+        break
+
     results = model(img, stream=True)
 
     # coordinates
@@ -47,11 +40,12 @@ while True:
 
             # confidence
             confidence = math.ceil((box.conf[0]*100))/100
-            print("Confidence --->",confidence)
 
             # class name
             cls = int(box.cls[0])
-            print("Class name -->", classNames[cls])
+            label = classNames[cls]
+            print("Class:", cls, "| Confidence:", confidence, "| Box:", (x1, y1, x2, y2))
+
 
             # object details
             org = [x1, y1]
@@ -61,10 +55,27 @@ while True:
             thickness = 2
 
             cv2.putText(img, classNames[cls], org, font, fontScale, color, thickness)
+            # If it's a license plate, apply OCR
+            if label == "license plate":
+                plate_roi = img[y1:y2, x1:x2]
+                # Convert ROI to RGB for pytesseract
+                plate_rgb = cv2.cvtColor(plate_roi, cv2.COLOR_BGR2RGB)
+                text = pytesseract.image_to_string(plate_rgb, config='--psm 8')
+                print(f"Detected Plate Text: {text.strip()}")
 
-    cv2.imshow('Webcam', img)
-    if cv2.waitKey(1) == ord('q'):
-        break
+                # Optional: overlay the detected text
+                #cv2.putText(img, text.strip(), (x1, y2 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+    # cv2.imshow('Webcam', img)
+    # if cv2.waitKey(1) == ord('q'):
+    #     break
+    # Save one image every 30 frames 
+    # frame_count = 0
+    # save frames for later
+    # if frame_count % 30 == 0:
+    #     cv2.imwrite(f"/app/images/frame_{frame_count}.jpg", img)
+    # frame_count += 1
+
 
 cap.release()
 cv2.destroyAllWindows()
