@@ -7,7 +7,9 @@
 from ultralytics import YOLO
 import cv2
 import math
-import pytesseract
+import easyocr
+reader = easyocr.Reader(['en'])
+# import pytesseract
 # start webcam
 cap = cv2.VideoCapture("http://host.docker.internal:8080/video_feed")
 cap.set(3, 640)
@@ -17,7 +19,7 @@ cap.set(4, 480)
 model = YOLO("models/best.pt")
 
 # object classes
-classNames = ["person", "bicycle", "car", "motorbike", "bus", "truck", "boat", "license plate"]
+classNames = ["license plate"]
 
 while True:
     success, img = cap.read()
@@ -56,12 +58,20 @@ while True:
 
             cv2.putText(img, classNames[cls], org, font, fontScale, color, thickness)
             # If it's a license plate, apply OCR
+            print("Label is:", label)
             if label == "license plate":
                 plate_roi = img[y1:y2, x1:x2]
-                # Convert ROI to RGB for pytesseract
-                plate_rgb = cv2.cvtColor(plate_roi, cv2.COLOR_BGR2RGB)
-                text = pytesseract.image_to_string(plate_rgb, config='--psm 8')
-                print(f"Detected Plate Text: {text.strip()}")
+                # plate_gray = cv2.cvtColor(plate_roi, cv2.COLOR_BGR2GRAY)
+                # plate_eq = cv2.equalizeHist(plate_gray)
+                # _, plate_thresh = cv2.threshold(plate_eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                # Send the preprocessed image to Tesseract
+                # text = pytesseract.image_to_string(plate_thresh, config='--psm 7')
+                # print(f"Detected Plate Text: {text.strip()}")
+
+                # OCR using EasyOCR
+                ocr_results = reader.readtext(plate_roi)
+                for (bbox, text, conf) in ocr_results:
+                    print(f"[EasyOCR] Text: {text} | Confidence: {conf:.2f}")
 
                 # Optional: overlay the detected text
                 #cv2.putText(img, text.strip(), (x1, y2 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
