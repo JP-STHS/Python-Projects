@@ -8,6 +8,8 @@ from ultralytics import YOLO
 import cv2
 import math
 import easyocr
+import re
+from collections import Counter
 reader = easyocr.Reader(['en'])
 # import pytesseract
 # start webcam
@@ -20,6 +22,10 @@ model = YOLO("models/best.pt")
 
 # object classes
 classNames = ["license plate"]
+
+plate_votes = Counter()
+# frame_count = 0
+plate_pattern = re.compile(r"^[A-Z]{3}-?\d{3}$")  # Adjust for your region
 
 while True:
     success, img = cap.read()
@@ -41,8 +47,10 @@ while True:
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 3)
 
             # confidence
-            confidence = math.ceil((box.conf[0]*100))/100
-
+            #Round Up
+            #confidence = math.ceil((box.conf[0]*100))/100
+            #Round to 2 decimals
+            confidence = round(float(box.conf[0]), 2)
             # class name
             cls = int(box.cls[0])
             label = classNames[cls]
@@ -60,8 +68,13 @@ while True:
             # If it's a license plate, apply OCR
             print("Label is:", label)
             if label == "license plate":
-                plate_roi = img[y1:y2, x1:x2]
-                # plate_gray = cv2.cvtColor(plate_roi, cv2.COLOR_BGR2GRAY)
+                margin = 5
+                plate_roi = img[max(y1+margin,0):max(y2-margin,0), max(x1+margin,0):max(x2-margin,0)]
+
+                # Enhance plate for OCR
+                gray = cv2.cvtColor(plate_roi, cv2.COLOR_BGR2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                enhanced = clahe.apply(gray)
                 # plate_eq = cv2.equalizeHist(plate_gray)
                 # _, plate_thresh = cv2.threshold(plate_eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 # Send the preprocessed image to Tesseract
@@ -69,9 +82,13 @@ while True:
                 # print(f"Detected Plate Text: {text.strip()}")
 
                 # OCR using EasyOCR
-                ocr_results = reader.readtext(plate_roi)
+                ocr_results = reader.readtext(enhanced)
                 for (bbox, text, conf) in ocr_results:
-                    print(f"[EasyOCR] Text: {text} | Confidence: {conf:.2f}")
+                    cleaned = text.strip().replace(" ", "").upper()
+                    if conf > 0.5 and plate_pattern.match(cleaned):
+                        plate_votes[cleaned] += 1
+                        print(f"[MATCHED] Text: {cleaned} | Confidence: {conf:.2f}")
+                    # print(f"[EasyOCR] Text: {text} | Confidence: {conf:.2f}")
 
                 # Optional: overlay the detected text
                 #cv2.putText(img, text.strip(), (x1, y2 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
@@ -79,12 +96,13 @@ while True:
     # cv2.imshow('Webcam', img)
     # if cv2.waitKey(1) == ord('q'):
     #     break
-    # Save one image every 30 frames 
-    # frame_count = 0
-    # save frames for later
-    # if frame_count % 30 == 0:
-    #     cv2.imwrite(f"/app/images/frame_{frame_count}.jpg", img)
+    # Every 30 frames, show most likely plate
     # frame_count += 1
+    # if frame_count % 30 == 0:
+    #     if plate_votes:
+    #         best_guess = plate_votes.most_common(1)[0]
+    #         print(f"\n HIGEST VOTED PLATE: {best_guess[0]} (votes: {best_guess[1]})\n")
+    #     plate_votes.clear()
 
 
 cap.release()
