@@ -25,7 +25,8 @@ classNames = ["license plate"]
 
 plate_votes = Counter()
 # frame_count = 0
-plate_pattern = re.compile(r"^[A-Z]{3}-?\d{3}$")  # Adjust for your region
+# plate_pattern = re.compile(r"^[A-Z]{3}-?\d{3}$")  # Adjust per region
+plate_pattern = re.compile(r"^[A-Z0-9\- ]{1,8}$") #most US plates
 
 while True:
     success, img = cap.read()
