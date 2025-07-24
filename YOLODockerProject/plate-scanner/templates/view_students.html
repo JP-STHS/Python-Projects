@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head><title>All Students</title></head>
+<body>
+    <h1>All Students</h1>
+    {% if students %}
+        <ul>
+        {% for student in students %}
+            <li>ID: {{ student._id }} - Name: {{ student.Name }} - Residential Status: {{ student.ResidentialStatus }}</li>
+        {% endfor %}
+        </ul>
+    {% else %}
+        <p>No students found.</p>
+    {% endif %}
+    <a href="{{ url_for('index') }}">Back to Home</a>
+</body>
+</html>

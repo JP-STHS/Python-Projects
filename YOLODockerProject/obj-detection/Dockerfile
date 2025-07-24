@@ -4,7 +4,7 @@ FROM docker.io/pytorch/pytorch
 
 WORKDIR /obj-detection
 
-# Install system dependencies for OpenCV (including libGL)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     # tesseract-ocr \
     libgl1-mesa-glx \
@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 COPY . /obj-detection
-# COPY Shrek_character.png /app/images/
 
 RUN pip install --upgrade pip
 # RUN pip install ultralytics pytesseract

@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    command: python -u obj-detection.py
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+  #   links:
+  #     - mongo
+  # mongo:
+  #   image: mongo:latest
+  #   hostname: test_mongodb
+  #   ports:
+  #     - 27017:27017

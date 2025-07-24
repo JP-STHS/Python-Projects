@@ -91,7 +91,7 @@ while True:
                         print(f"[MATCHED] Text: {cleaned} | Confidence: {conf:.2f}")
                     # print(f"[EasyOCR] Text: {text} | Confidence: {conf:.2f}")
 
-                # Optional: overlay the detected text
+                # Optional chagpt hogwash: overlay the detected text
                 #cv2.putText(img, text.strip(), (x1, y2 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
     # cv2.imshow('Webcam', img)

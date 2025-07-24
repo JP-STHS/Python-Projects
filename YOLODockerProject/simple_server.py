@@ -1,4 +1,4 @@
-# cam_streamer.py
+# simple_server.py
 import cv2
 from flask import Flask, Response
 
@@ -10,10 +10,17 @@ def gen_frames():
         success, frame = cap.read()
         if not success:
             break
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        try:
+            _, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        except GeneratorExit:
+            print("Client disconnected from video stream.")
+            break
+        except Exception as e:
+            print("Streaming error:", e)
+            break
 
 @app.route('/video_feed')
 def video_feed():

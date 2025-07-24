@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Search Results</title>
+</head>
+<body>
+    <h1>Search Results for "{{ searched }}"</h1>
+
+    {% if students %}
+        <ul>
+        {% for stu in students %}
+            <li>
+                <strong>Name:</strong> {{ stu.Name }}<br>
+                <strong>ID:</strong> {{ stu._id }}<br>
+                <strong>Status:</strong> {{ stu.ResidentialStatus }}<br>
+
+                {% if stu.cars %}
+                    <details>
+                        <summary>Linked Cars ({{ stu.cars | length }})</summary>
+                        <ul>
+                        {% for car in stu.cars %}
+                            <li>
+                                Plate: {{ car.LicensePlate }} | Make: {{ car.Make }} | Model: {{ car.Model }}
+                            </li>
+                        {% endfor %}
+                        </ul>
+                    </details>
+                {% else %}
+                    <em>No cars linked.</em>
+                {% endif %}
+            </li>
+            <hr>
+        {% endfor %}
+        </ul>
+    {% else %}
+        <p>No student found with that name.</p>
+    {% endif %}
+    <br>
+    <a href="/">Back to Home</a>
+</body>
+</html>

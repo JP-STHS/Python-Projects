@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>All Cars</title></head>
+<body>
+    <h1>All Cars</h1>
+    {% if cars %}
+        <ul>
+        {% for car in cars %}
+            Plate: {{ car.LicensePlate }}<br>
+            Make: {{ car.Make }}<br>
+            Model: {{ car.Model }}<br>
+            State: {{ car.State }}<br>
+            Country: {{ car.Country }}<br>
+            Color: {{ car.Color }}<br>
+            Year: {{ car.Year }}<br>
+        {% endfor %}
+        </ul>
+    {% else %}
+        <p>No cars found.</p>
+    {% endif %}
+    <a href="{{ url_for('index') }}">Back to Home</a>
+</body>
+</html>

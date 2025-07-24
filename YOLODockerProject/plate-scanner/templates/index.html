@@ -1,0 +1,166 @@
+<!-- FROM https://www.geeksforgeeks.org/devops/dockerizing-a-python-flask-app-with-mongodb/ -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>License Plate Scanner</title>
+    <style>
+        body{
+            font-family: "Arial", sans-serif;
+            background-color: #179aac;
+        }
+        .add-stu, .add-car, .view-stu{
+        border: 1px solid hsl(0, 84%, 43%);
+        padding: 20px;
+        margin-top: 2%;
+        border-radius: 8px;
+        width: 300px;
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        background-color: #e6dcdc;
+        }
+        .view-buttons{
+            display: flex;
+            padding-top: 3%;
+            padding-bottom: 3%;
+            justify-content: center;
+            
+       }
+       .b1, .b2{
+        margin-left: 15%;
+        margin-right: 15%;
+       }
+       button{
+        background-color: #d6fac3;
+        transition-duration: 1s;
+       }
+       button:hover{
+        background-color: rgb(20, 105, 105);
+        cursor: pointer;
+        color: white;
+       }
+       .toppart{
+        color: white;
+        display: flex;
+        justify-content: center;
+       }
+       .toppart1, .toppart2{
+        margin-left: 8%;
+        margin-right: 10%;
+        text-align: center;
+       }
+       .forms{
+        padding-top: 2%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+       }
+    </style>
+</head>
+<body>
+    <div class="toppart">
+        <div class="toppart1">
+            <h1>Live Feed</h1>
+            <img style="transform:scaleX(-1);" class = "video-stream" src="http://host.docker.internal:8080/video_feed" width="640" height="480">
+        </div>
+        <div class="toppart2" style="padding-top: 10%;"><h2>Live Detections</h2>
+            <p>Last Student Detected: <span id="student-name">N/A</span></p>
+            <p>Corresponding Student Plate: <span id="stuplate-number">N/A</span></p>
+            <p>Last License Plate Detected: <span id="plate-number">N/A</span></p>
+        </div>
+    </div>
+    <div class="forms">
+    <h2 style="color: white;">Database Info</h2>
+    <!-- Add Student Form -->
+        <div class="add-stu">
+            <h3>Add Student</h3>
+            <form action="/add_student" method="POST">
+                <label>Name:</label>
+                <input type="text" name="name" required><br>
+                <label>ID:</label>
+                <input type="number" name="id" required><br>
+                <label>Residential Status:</label>
+                    <select name="res-status" required>
+                    <option value="">-- Select Status --</option>
+                    <option value="commuter">Commuter</option>
+                    <option value="resident">Resident</option>
+                    </select><br>
+                    <button type="submit">Add Student</button>
+            </form>
+        </div>
+        
+
+        <!-- Add Car & Assign Student Form -->
+        <div class="add-car">
+            <h3>Add Car</h3>
+            <form action="/add_car" method="POST">
+                <label>License Plate:</label>
+                <input type="text" name="plate" required><br>
+                <label>Make:</label>
+                <input type="text" name="make"><br>
+                <label>Model:</label>
+                <input type="text" name="model"><br>
+                <label>State:</label>
+                <input type="text" name="state" maxlength="2"><br>
+                <label>Country:</label>
+                <input type="text" name="country"><br>
+                <label>Color:</label>
+                <input type="text" name="color"><br>
+                <label>Year:</label>
+                <input type="number" name="year"><br>
+                <label>Assign to Student:</label>
+                <input type="number" name="student_id" required>
+                <!-- ineffective cause of duplicate names: <select name="student_id" required>
+                    {% for stu in students %}
+                        <option value="{{ stu._id }}">{{ stu.Name }}</option>
+                    {% endfor %}
+                </select><br> -->
+
+                <button type="submit">Add Car</button>
+            </form>
+        </div>
+        <div class="view-stu">
+            <h3>Find Student using ID</h3>
+            <form action="/find_student" method="GET">
+                <label>Student Name:</label>
+                <input type="number" name="id" required><br>
+                <button type="submit">Search</button>
+            </form>
+        </div>
+
+    </div>  
+
+    <div class="view-buttons">
+        <!-- view all students -->
+        <a class="b1" href="{{ url_for('view_students') }}">
+            <button style="height: 5em; width: 10em; font-size: 40px; border-radius: 1em; ">View Students</button>
+        </a>
+        
+        <!-- view all cars -->
+        <a class="b2" href="{{ url_for('view_cars') }}">
+            <button style ="height: 5em; width: 10em; font-size: 40px; border-radius: 1em; ">View Cars</button>
+        </a>
+        <br>
+    </div>
+    
+    
+    
+    <!-- javascript -->
+    <script>
+    async function fetchDetection() {
+        try {
+            const response = await fetch('/last_detection');
+            const data = await response.json();
+            document.getElementById('student-name').textContent = data.student || "N/A";
+            document.getElementById('stuplate-number').textContent = data.stuplate || "N/A";
+            document.getElementById('plate-number').textContent = data.plate || "N/A";
+            
+        } catch (e) {
+            console.error("Failed to fetch detection info:", e);
+        }
+    }
+
+    setInterval(fetchDetection, 2000);
+    </script>
+
+
+</body>
+</html>
