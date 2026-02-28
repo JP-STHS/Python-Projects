@@ -183,19 +183,6 @@ class ChatServer:
 
 
 class PlaintextSession:
-    """
-    Wraps a TCP socket with a simple length-prefixed JSON protocol.
-
-    Wire format:
-        [ 4-byte big-endian length ][ JSON bytes ]
-
-    The length prefix lets the receiver know exactly how many bytes to read,
-    solving the "TCP is a stream, not packets" problem.
-
-    In Week 3 this class is replaced by EncryptedSession which adds
-    X25519 + AES-256-GCM on top of the same wire format.
-    """
-
     def __init__(self, sock: socket.socket):
         self.sock  = sock
         self._lock = threading.Lock()   # prevent concurrent writes corrupting the stream
@@ -258,7 +245,7 @@ class MessagingWindow:
                  font=FONT_BIG, bg=DARK_BG, fg=ACCENT).pack(pady=(14, 2))
 
         tk.Label(self.win,
-                 text="[Week 2 — plaintext TCP  •  encryption arrives in Week 3]",
+                 text="[encryption soon]",
                  font=FONT_SM, bg=DARK_BG, fg="#3A8899").pack()
 
         tk.Frame(self.win, height=1, bg=TEAL).pack(fill="x", pady=8, padx=20)
@@ -290,7 +277,7 @@ class MessagingWindow:
 
         center_window(self.win)
         self._append("sys", f"Connected to {peer_nickname}. "
-                            f"Messages are plaintext in Week 2.\n")
+                            f"Messages are plaintext for now.\n")
 
         # Start background thread to receive incoming messages
         threading.Thread(target=self._recv_loop, daemon=True).start()
