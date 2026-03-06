@@ -1,12 +1,46 @@
+
 # DEPENDENCIES:
 #   pip install cryptography Pillow
+
 
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, filedialog
 from PIL import Image, ImageTk
-import os, socket, threading, json, time, struct, base64, secrets
+import os, socket, threading, json, time, struct, base64, secrets, sys, subprocess
 from pathlib import Path
 from datetime import datetime
+
+# ── Windows firewall helper ───────────────────────────────────────────────────
+
+def _ensure_firewall_rule():
+    if sys.platform != "win32":
+        return
+    rule_name = "CyberApp-P2P"
+    try:
+        # Check if rule already exists
+        result = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
+            capture_output=True, text=True
+        )
+        if "No rules match" in result.stdout or result.returncode != 0:
+            # Add inbound rule for both ports
+            for port in [55555, 55556]:
+                subprocess.run([
+                    "netsh", "advfirewall", "firewall", "add", "rule",
+                    f"name={rule_name}",
+                    "dir=in", "action=allow", "protocol=TCP",
+                    f"localport={port}"
+                ], capture_output=True)
+                subprocess.run([
+                    "netsh", "advfirewall", "firewall", "add", "rule",
+                    f"name={rule_name}",
+                    "dir=in", "action=allow", "protocol=UDP",
+                    f"localport={port}"
+                ], capture_output=True)
+    except Exception:
+        pass  # Non-admin — user will need to allow manually via Windows popup
+
+_ensure_firewall_rule()
 
 # Cryptography library (pip install cryptography)
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -114,7 +148,7 @@ def center_window(window):
 # ── Networking ────────────────────────────────────────────────────────────────
 
 class PeerDiscovery:
-    """UDP broadcast discovery"""
+    """UDP broadcast discovery (same as Week 2, now also broadcasts public key)."""
 
     def __init__(self, nickname: str, pub_bytes: bytes, on_peer_found, on_peer_lost):
         self.nickname      = nickname
@@ -123,16 +157,35 @@ class PeerDiscovery:
         self.on_peer_lost  = on_peer_lost
         self.peers         = {}
         self._stop         = threading.Event()
-        self.local_ip      = self._get_local_ip()
+        self.local_ips     = self._get_local_ips()   # set of all our IPs
         self._socks        = []
 
-    def _get_local_ip(self):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def _get_local_ips(self) -> set:
+        """
+        Collect ALL IPv4 addresses assigned to this machine.
+        On Windows, a machine with Wi-Fi + Ethernet can have multiple IPs,
+        and broadcasts may come back tagged with any of them.
+        Checking only one IP means we'd add ourselves as a peer.
+        """
+        ips = set()
         try:
+            # Primary outbound IP (the one used for internet traffic)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-        finally:
+            ips.add(s.getsockname()[0])
             s.close()
+        except Exception:
+            pass
+        try:
+            # All IPs bound to every hostname/interface on this machine
+            hostname = socket.gethostname()
+            for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+                ips.add(info[4][0])
+        except Exception:
+            pass
+        # Always include loopback so we never add 127.0.0.1 as a peer
+        ips.add("127.0.0.1")
+        return ips
 
     def start(self):
         threading.Thread(target=self._broadcast_loop, daemon=True).start()
@@ -168,7 +221,7 @@ class PeerDiscovery:
                 data, addr = sock.recvfrom(4096)
                 msg        = json.loads(data.decode())
                 peer_ip    = addr[0]
-                if peer_ip == self.local_ip:
+                if peer_ip in self.local_ips:   # ignore all our own interfaces
                     continue
                 if msg.get("type") == "announce":
                     is_new = peer_ip not in self.peers
@@ -195,12 +248,14 @@ class PeerDiscovery:
     def stop(self):
         self._stop.set()
         for s in self._socks:
-            try: s.close()
-            except: pass
+            try:
+                s.close()
+            except OSError:
+                pass  # WinError 10038: socket already closed — safe to ignore
 
 
 class ChatServer:
-    """Accepts incoming TCP connections"""
+    """Accepts incoming TCP connections (same as Week 2)."""
 
     def __init__(self, on_incoming):
         self.on_incoming = on_incoming
@@ -230,13 +285,16 @@ class ChatServer:
     def stop(self):
         self._stop.set()
         if self._sock:
-            try: self._sock.close()
-            except: pass
+            try:
+                self._sock.close()
+            except OSError:
+                pass  # WinError 10038: already closed — safe to ignore
 
 
 class EncryptedSession:
     """
-    Every payload is AES-256-GCM encrypted after an X25519 handshake.
+    Replaces Week 2's PlaintextSession. Same length-prefix wire format,
+    but every payload is AES-256-GCM encrypted after an X25519 handshake.
 
     HANDSHAKE SEQUENCE:
       Initiator sends:  MAGIC + their_public_key (32 bytes)
@@ -312,8 +370,14 @@ class EncryptedSession:
         return msg.get("type"), msg, None
 
     def close(self):
-        try: self.sock.close()
-        except: pass
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass  # WinError 10038: already closed
 
     # ── Internal framing ──
 
