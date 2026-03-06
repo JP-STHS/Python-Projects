@@ -1,7 +1,25 @@
-
+# =============================================================================
+# CYBERAPP  —  WEEK 3: ENCRYPTION & FILE TRANSFER  (FINAL)
+# =============================================================================
+# WHAT THIS COVERS:
+#   - X25519 Elliptic Curve Diffie-Hellman (ECDH) key exchange
+#   - HKDF-SHA256 key derivation
+#   - AES-256-GCM authenticated encryption (AEAD)
+#   - Ephemeral session keys (keys only exist in RAM, never written to disk)
+#   - Encrypted binary file & image transfer
+#   - Local secure storage of received files
+#   - Complete production-ready app with clean shutdown
+#
 # DEPENDENCIES:
 #   pip install cryptography Pillow
-
+#
+# HOW ENCRYPTION WORKS (summary):
+#   1. Both peers generate a fresh X25519 keypair (new for every session)
+#   2. They exchange public keys over TCP
+#   3. Each derives the same 256-bit AES key using ECDH + HKDF
+#   4. Every message/file is encrypted with AES-256-GCM + a random 12-byte nonce
+#   5. When the window closes, the keys vanish — perfect forward secrecy
+# =============================================================================
 
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, filedialog
@@ -11,36 +29,40 @@ from pathlib import Path
 from datetime import datetime
 
 # ── Windows firewall helper ───────────────────────────────────────────────────
-
-def _ensure_firewall_rule():
+def _ensure_firewall_rule() -> bool:
+    """
+    Add Windows Firewall inbound rules for both CyberApp ports (TCP + UDP).
+    netsh requires Administrator — returns False if that fails so the GUI
+    can show a clear warning instead of silently not working.
+    """
     if sys.platform != "win32":
-        return
+        return True
     rule_name = "CyberApp-P2P"
     try:
-        # Check if rule already exists
-        result = subprocess.run(
+        check = subprocess.run(
             ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
             capture_output=True, text=True
         )
-        if "No rules match" in result.stdout or result.returncode != 0:
-            # Add inbound rule for both ports
-            for port in [55555, 55556]:
-                subprocess.run([
-                    "netsh", "advfirewall", "firewall", "add", "rule",
-                    f"name={rule_name}",
-                    "dir=in", "action=allow", "protocol=TCP",
-                    f"localport={port}"
-                ], capture_output=True)
-                subprocess.run([
-                    "netsh", "advfirewall", "firewall", "add", "rule",
-                    f"name={rule_name}",
-                    "dir=in", "action=allow", "protocol=UDP",
-                    f"localport={port}"
-                ], capture_output=True)
-    except Exception:
-        pass  # Non-admin — user will need to allow manually via Windows popup
+        if check.returncode == 0 and "No rules match" not in check.stdout:
+            return True  # already exists
 
-_ensure_firewall_rule()
+        all_ok = True
+        for protocol in ["TCP", "UDP"]:
+            for port in [55555, 55556]:
+                r = subprocess.run([
+                    "netsh", "advfirewall", "firewall", "add", "rule",
+                    f"name={rule_name}",
+                    "dir=in", "action=allow",
+                    f"protocol={protocol}",
+                    f"localport={port}",
+                ], capture_output=True, text=True)
+                if r.returncode != 0:
+                    all_ok = False  # netsh needs admin — rule not written
+        return all_ok
+    except Exception:
+        return False
+
+_FIREWALL_OK = _ensure_firewall_rule()
 
 # Cryptography library (pip install cryptography)
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -234,6 +256,8 @@ class PeerDiscovery:
                         self.on_peer_found(peer_ip, msg["nickname"])
             except (socket.timeout, json.JSONDecodeError):
                 pass
+            except OSError:
+                break  # socket was closed by stop() — exit cleanly
 
     def _prune_loop(self):
         while not self._stop.is_set():
@@ -281,6 +305,10 @@ class ChatServer:
                 ).start()
             except socket.timeout:
                 pass
+            except OSError:
+                # On Windows, closing the socket from stop() raises OSError
+                # here instead of unblocking accept() cleanly — just exit.
+                break
 
     def stop(self):
         self._stop.set()
@@ -702,8 +730,10 @@ class ChatWindow:
             session = EncryptedSession(sock, is_initiator=True)
             self.win.after(0, lambda: self._open_messaging(session, ip, peer_nickname))
         except Exception as e:
-            self.win.after(0, lambda: messagebox.showerror(
-                "Connection Failed", f"Could not connect to {peer_nickname}:\n{e}"))
+            # Capture e now — by the time the lambda runs the except block
+            # is gone and 'e' would be unbound (NameError on Python 3.12+)
+            self.win.after(0, lambda err=e: messagebox.showerror(
+                "Connection Failed", f"Could not connect to {peer_nickname}:\n{err}"))
 
     def _on_incoming_connection(self, conn: socket.socket, peer_ip: str):
         try:
@@ -760,6 +790,20 @@ class CyberApp:
                 pass
 
         center_window(self.root)
+
+        # Show firewall warning after window is visible
+        if not _FIREWALL_OK and sys.platform == "win32":
+            self.root.after(500, self._warn_firewall)
+
+    def _warn_firewall(self):
+        messagebox.showwarning(
+            "Firewall — Action Required",
+            "CyberApp couldn't automatically add a Windows Firewall rule.\n\n"
+            "Other PCs may not be able to connect to you.\n\n"
+            "Fix: Right-click cyberapp.py → 'Run as administrator'\n"
+            "OR manually allow ports 55555-55556 (TCP+UDP) in:\n"
+            "Windows Defender Firewall → Advanced Settings → Inbound Rules"
+        )
 
     def _on_start(self):
         self.root.withdraw()
