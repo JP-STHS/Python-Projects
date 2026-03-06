@@ -172,42 +172,112 @@ def center_window(window):
 class PeerDiscovery:
     """UDP broadcast discovery (same as Week 2, now also broadcasts public key)."""
 
-    def __init__(self, nickname: str, pub_bytes: bytes, on_peer_found, on_peer_lost):
+    def __init__(self, nickname: str, pub_bytes: bytes, on_peer_found, on_peer_lost, log=None):
         self.nickname      = nickname
         self.pub_bytes     = pub_bytes
         self.on_peer_found = on_peer_found
         self.on_peer_lost  = on_peer_lost
         self.peers         = {}
         self._stop         = threading.Event()
-        self.local_ips     = self._get_local_ips()   # set of all our IPs
+        self.local_ips, self.bcast_addrs = self._get_network_info()
         self._socks        = []
+        self.log           = log  # debug callback(str)
 
-    def _get_local_ips(self) -> set:
+    def _get_network_info(self):
         """
-        Collect ALL IPv4 addresses assigned to this machine.
-        On Windows, a machine with Wi-Fi + Ethernet can have multiple IPs,
-        and broadcasts may come back tagged with any of them.
-        Checking only one IP means we'd add ourselves as a peer.
+        Returns:
+          local_ips   : set of all our IPv4 addresses (for self-filter)
+          bcast_addrs : list of subnet broadcast addresses to send to
+                        e.g. ["192.168.1.255"] for a /24 network
+
+        Why not just use "<broadcast>"?
+        On Windows, "<broadcast>" sends to 255.255.255.255 which many
+        routers and Windows itself block. The real subnet broadcast
+        (e.g. 192.168.1.255) is far more reliably delivered on Wi-Fi.
+        We get it by asking the OS for each interface's IP + netmask.
         """
-        ips = set()
+        import ipaddress
+        local_ips   = {"127.0.0.1"}
+        bcast_addrs = []
+
+        # --- Method 1: ipconfig / ip addr parsing via socket ---
         try:
-            # Primary outbound IP (the one used for internet traffic)
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
-            ips.add(s.getsockname()[0])
+            primary_ip = s.getsockname()[0]
             s.close()
+            local_ips.add(primary_ip)
         except Exception:
-            pass
+            primary_ip = None
+
+        # --- Method 2: getaddrinfo for all hostname aliases ---
         try:
-            # All IPs bound to every hostname/interface on this machine
             hostname = socket.gethostname()
             for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-                ips.add(info[4][0])
+                local_ips.add(info[4][0])
         except Exception:
             pass
-        # Always include loopback so we never add 127.0.0.1 as a peer
-        ips.add("127.0.0.1")
-        return ips
+
+        # --- Method 3 (Windows): parse `ipconfig` output for netmask ---
+        # This is the most reliable way to get IP+netmask pairs on Windows
+        if sys.platform == "win32":
+            try:
+                result = subprocess.run(
+                    ["ipconfig"], capture_output=True, text=True, timeout=3
+                )
+                lines = result.stdout.splitlines()
+                current_ip = None
+                for line in lines:
+                    line = line.strip()
+                    if "IPv4 Address" in line or "IP Address" in line:
+                        parts = line.split(":", 1)
+                        if len(parts) == 2:
+                            current_ip = parts[1].strip().rstrip("(Preferred)").strip()
+                            local_ips.add(current_ip)
+                    elif "Subnet Mask" in line and current_ip:
+                        parts = line.split(":", 1)
+                        if len(parts) == 2:
+                            mask = parts[1].strip()
+                            try:
+                                net = ipaddress.IPv4Network(
+                                    f"{current_ip}/{mask}", strict=False
+                                )
+                                bcast = str(net.broadcast_address)
+                                if bcast not in ("255.255.255.255", "0.0.0.0"):
+                                    bcast_addrs.append(bcast)
+                            except Exception:
+                                pass
+                        current_ip = None
+            except Exception:
+                pass
+
+        # --- Method 4 (Linux/Mac): parse `ip addr` ---
+        else:
+            try:
+                result = subprocess.run(
+                    ["ip", "addr"], capture_output=True, text=True, timeout=3
+                )
+                import re
+                for m in re.finditer(r"inet (\d+\.\d+\.\d+\.\d+)/(\d+)", result.stdout):
+                    ip, prefix = m.group(1), int(m.group(2))
+                    local_ips.add(ip)
+                    try:
+                        net   = ipaddress.IPv4Network(f"{ip}/{prefix}", strict=False)
+                        bcast = str(net.broadcast_address)
+                        if bcast not in ("255.255.255.255", "0.0.0.0"):
+                            bcast_addrs.append(bcast)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Always fall back to generic broadcast if we found nothing specific
+        if not bcast_addrs:
+            bcast_addrs = ["<broadcast>"]
+
+        # Deduplicate
+        bcast_addrs = list(dict.fromkeys(bcast_addrs))
+        return local_ips, bcast_addrs
 
     def start(self):
         threading.Thread(target=self._broadcast_loop, daemon=True).start()
@@ -222,28 +292,43 @@ class PeerDiscovery:
             "type":     "announce",
             "nickname": self.nickname,
             "port":     CHAT_PORT
-            # Note: we do NOT broadcast public keys here — they're exchanged
-            # fresh per-session over TCP for perfect forward secrecy
         }).encode()
+        if self.log:
+            self.log(f"[DISCOVERY] Broadcasting to: {self.bcast_addrs}")
+            self.log(f"[DISCOVERY] My IPs (filtered out): {self.local_ips}")
         while not self._stop.is_set():
-            try:
-                sock.sendto(payload, ("<broadcast>", DISCOVERY_PORT))
-            except Exception:
-                pass
+            for addr in self.bcast_addrs:
+                try:
+                    sock.sendto(payload, (addr, DISCOVERY_PORT))
+                except Exception as e:
+                    if self.log:
+                        self.log(f"[DISCOVERY] Broadcast to {addr} failed: {e}")
             self._stop.wait(BROADCAST_INTERVAL)
 
     def _listen_loop(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", DISCOVERY_PORT))
+        try:
+            sock.bind(("", DISCOVERY_PORT))
+        except OSError as e:
+            if self.log:
+                self.log(f"[DISCOVERY] BIND FAILED on port {DISCOVERY_PORT}: {e}")
+                self.log(f"[DISCOVERY] Another app may be using port {DISCOVERY_PORT}")
+            return
         sock.settimeout(1.0)
         self._socks.append(sock)
+        if self.log:
+            self.log(f"[DISCOVERY] Listening on UDP port {DISCOVERY_PORT}")
         while not self._stop.is_set():
             try:
                 data, addr = sock.recvfrom(4096)
                 msg        = json.loads(data.decode())
                 peer_ip    = addr[0]
-                if peer_ip in self.local_ips:   # ignore all our own interfaces
+                if self.log:
+                    self.log(f"[DISCOVERY] Packet from {peer_ip}: {msg.get('nickname','?')}")
+                if peer_ip in self.local_ips:
+                    if self.log:
+                        self.log(f"[DISCOVERY] Ignored (own IP)")
                     continue
                 if msg.get("type") == "announce":
                     is_new = peer_ip not in self.peers
@@ -253,11 +338,13 @@ class PeerDiscovery:
                         "last_seen": time.time()
                     }
                     if is_new:
+                        if self.log:
+                            self.log(f"[DISCOVERY] NEW PEER: {msg['nickname']} @ {peer_ip}")
                         self.on_peer_found(peer_ip, msg["nickname"])
             except (socket.timeout, json.JSONDecodeError):
                 pass
             except OSError:
-                break  # socket was closed by stop() — exit cleanly
+                break
 
     def _prune_loop(self):
         while not self._stop.is_set():
@@ -281,10 +368,11 @@ class PeerDiscovery:
 class ChatServer:
     """Accepts incoming TCP connections (same as Week 2)."""
 
-    def __init__(self, on_incoming):
+    def __init__(self, on_incoming, log=None):
         self.on_incoming = on_incoming
         self._stop       = threading.Event()
         self._sock       = None
+        self.log         = log
 
     def start(self):
         threading.Thread(target=self._serve, daemon=True).start()
@@ -292,12 +380,21 @@ class ChatServer:
     def _serve(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind(("", CHAT_PORT))
+        try:
+            self._sock.bind(("", CHAT_PORT))
+        except OSError as e:
+            if self.log:
+                self.log(f"[SERVER] BIND FAILED on port {CHAT_PORT}: {e}")
+            return
         self._sock.listen(5)
         self._sock.settimeout(1.0)
+        if self.log:
+            self.log(f"[SERVER] Listening for TCP connections on port {CHAT_PORT}")
         while not self._stop.is_set():
             try:
                 conn, addr = self._sock.accept()
+                if self.log:
+                    self.log(f"[SERVER] Incoming connection from {addr[0]}")
                 threading.Thread(
                     target=self.on_incoming,
                     args=(conn, addr[0]),
@@ -306,8 +403,6 @@ class ChatServer:
             except socket.timeout:
                 pass
             except OSError:
-                # On Windows, closing the socket from stop() raises OSError
-                # here instead of unblocking accept() cleanly — just exit.
                 break
 
     def stop(self):
@@ -650,6 +745,23 @@ class ChatWindow:
                  font=FONT_SM, bg=DARK_BG, fg="#3A8899",
                  anchor="w").pack(side="bottom", fill="x", padx=30, pady=8)
 
+        # ── Debug console (toggleable) ──
+        self._debug_visible = False
+        self._debug_frame = tk.Frame(self.win, bg="#03030F")
+        self._debug_area = scrolledtext.ScrolledText(
+            self._debug_frame, font=("Consolas", 10),
+            bg="#03030F", fg="#00FF88",
+            height=8, state="disabled", relief="flat"
+        )
+        self._debug_area.pack(fill="both", expand=True, padx=8, pady=4)
+        debug_toggle = tk.Button(
+            self.win, text="[ debug ]",
+            font=("Consolas", 9), bg=DARK_BG, fg=TEAL,
+            relief="flat", cursor="hand2",
+            command=self._toggle_debug
+        )
+        debug_toggle.pack(side="bottom", anchor="e", padx=30)
+
         center_window(self.win)
         self.win.focus_force()
 
@@ -662,12 +774,37 @@ class ChatWindow:
             nickname=nickname,
             pub_bytes=self._pub_bytes,
             on_peer_found=self._on_peer_found,
-            on_peer_lost=self._on_peer_lost
+            on_peer_lost=self._on_peer_lost,
+            log=self._debug_log
         )
         self._discovery.start()
 
-        self._server = ChatServer(on_incoming=self._on_incoming_connection)
+        self._server = ChatServer(
+            on_incoming=self._on_incoming_connection,
+            log=self._debug_log
+        )
         self._server.start()
+
+    def _debug_log(self, msg: str):
+        """Thread-safe debug logger — writes to the debug console."""
+        def _do():
+            ts = datetime.now().strftime("%H:%M:%S")
+            self._debug_area.configure(state="normal")
+            self._debug_area.insert("end", f"[{ts}] {msg}\n")
+            self._debug_area.configure(state="disabled")
+            self._debug_area.see("end")
+        try:
+            self.win.after(0, _do)
+        except Exception:
+            pass
+
+    def _toggle_debug(self):
+        if self._debug_visible:
+            self._debug_frame.pack_forget()
+            self._debug_visible = False
+        else:
+            self._debug_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 4))
+            self._debug_visible = True
 
     def _on_peer_found(self, ip, peer_nickname):
         self._peer_map[ip] = self._discovery.peers.get(ip, {"nickname": peer_nickname})
@@ -722,16 +859,18 @@ class ChatWindow:
         ).start()
 
     def _connect_thread(self, ip, port, peer_nickname):
+        self._debug_log(f"[CONNECT] Attempting TCP to {ip}:{port} ({peer_nickname})")
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(8)
             sock.connect((ip, port))
             sock.settimeout(None)
+            self._debug_log(f"[CONNECT] TCP connected — starting handshake")
             session = EncryptedSession(sock, is_initiator=True)
+            self._debug_log(f"[CONNECT] Handshake OK — session established")
             self.win.after(0, lambda: self._open_messaging(session, ip, peer_nickname))
         except Exception as e:
-            # Capture e now — by the time the lambda runs the except block
-            # is gone and 'e' would be unbound (NameError on Python 3.12+)
+            self._debug_log(f"[CONNECT] FAILED: {e}")
             self.win.after(0, lambda err=e: messagebox.showerror(
                 "Connection Failed", f"Could not connect to {peer_nickname}:\n{err}"))
 
