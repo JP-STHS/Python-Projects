@@ -638,7 +638,7 @@ class MessagingWindow:
         route    = "🌐 Internet" if is_relay else "🔒 LAN"
         self.win.title(f"{route} Chat with {peer_nickname}")
         self.win.configure(bg=DARK_BG)
-        self.win.geometry("700x560")
+        self.win.geometry("700x760")
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
         tk.Label(self.win,
@@ -646,7 +646,7 @@ class MessagingWindow:
                  font=FONT_BIG, bg=DARK_BG, fg=RELAY_COL if is_relay else ACCENT).pack(pady=(14, 2))
         route_tag = "via relay server  •  " if is_relay else ""
         tk.Label(self.win,
-                 text=f"{route_tag}AES-256-GCM  •  X25519 ECDH  •  HKDF-SHA256  •  ephemeral keys",
+                 text=f"{route_tag}",
                  font=FONT_SM, bg=DARK_BG, fg="#3A8899").pack()
         tk.Frame(self.win, height=1, bg=TEAL).pack(fill="x", pady=8, padx=20)
 
@@ -685,7 +685,7 @@ class MessagingWindow:
         self._append("sys",
             f"Session established with {peer_nickname} via {conn_type}.\n"
             f"All messages and files are end-to-end encrypted.\n"
-            f"The relay server cannot read any of your messages.\n"
+            # f"The relay server cannot read any of your messages.\n"
             f"Received files saved to: {STORAGE_DIR}\n")
 
         threading.Thread(target=self._recv_loop, daemon=True).start()
