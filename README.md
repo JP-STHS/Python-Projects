@@ -1,2 +1,2 @@
 # Python Projects
-All my python projects created through school or during my free time.
+All my smaller python projects created through school or during my free time.
